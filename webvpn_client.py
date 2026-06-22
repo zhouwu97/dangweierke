@@ -112,11 +112,19 @@ class WebVpnClient:
                 errors="replace",
             )
 
+        def _mask_url(url: str | None) -> str | None:
+            if not url:
+                return url
+            masked = url
+            for param in ("ticket", "code", "execution"):
+                masked = re.sub(rf"({param}=)[^&]+", r"\1***MASKED***", masked)
+            return masked
+
         metadata = {
             "status_code": response.status_code,
-            "url": response.url,
+            "url": _mask_url(response.url),
             "content_type": content_type,
-            "location": response.headers.get("Location"),
+            "location": _mask_url(response.headers.get("Location")),
         }
         path.with_suffix(".json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -212,6 +220,44 @@ class WebVpnClient:
         if not salt or not execution:
             raise WebVpnPageChanged("WebVPN CAS 页面缺少 pwdEncryptSalt 或 execution")
 
+        # 检查滑块验证码
+        parsed = urlparse(page.url)
+        login_index = parsed.path.rfind("/login")
+        if login_index < 0:
+            raise WebVpnPageChanged(f"无法从 CAS 地址推导 contextPath：{page.url}")
+        context_path = f"{parsed.scheme}://{parsed.netloc}{parsed.path[:login_index]}"
+
+        captcha_check = self.session.get(
+            f"{context_path}/checkNeedCaptcha.htl",
+            params={"username": username, "_": int(time.time() * 1000)},
+            timeout=self.timeout,
+        )
+        need_captcha = False
+        if captcha_check.ok:
+            try:
+                need_captcha = bool(captcha_check.json().get("isNeed"))
+            except (ValueError, AttributeError):
+                pass
+
+        if need_captcha:
+            slider = self.session.get(
+                f"{context_path}/common/openSliderCaptcha.htl",
+                timeout=self.timeout,
+            )
+            try:
+                slider_data = slider.json()
+                if self.debug_dir:
+                    for key, filename in (
+                        ("bigImage", "vpn_slider_background.png"),
+                        ("smallImage", "vpn_slider_piece.png"),
+                    ):
+                        value = slider_data.get(key, "")
+                        if value:
+                            (self.debug_dir / filename).write_bytes(base64.b64decode(value))
+            except Exception:
+                pass
+            raise WebVpnAuthenticationFailed("WebVPN 当前要求滑块验证码。图片已保存到 debug 目录；本测试版暂不自动提交滑块。")
+
         action = str(form.get("action", "")).strip()
         action_url = urljoin(page.url, action)
         encrypted_password = self._vpn_encrypt_password(password, salt)
@@ -245,9 +291,40 @@ class WebVpnClient:
             current = self.session.get(next_url, timeout=self.timeout, allow_redirects=False)
             self._save_debug("00_vpn_redirect", current)
             if current.status_code in {301, 302, 303, 307, 308}:
-                next_url = urljoin(current.url, current.headers.get("Location", ""))
-            else:
-                break
+                location = current.headers.get("Location", "")
+                if not location:
+                    break
+                candidate = urljoin(current.url, location)
+                if urlparse(candidate).path == "/login" and "second_login=true" in candidate:
+                    code = input("WebVPN 要求六位二次验证码：").strip()
+                    if not re.fullmatch(r"\d{6}", code):
+                        raise WebVpnAuthenticationFailed("二次验证码必须是六位数字")
+                    totp = self.session.post(
+                        f"{VPN_BASE}/do-second-login",
+                        data={"username": "", "code": code},
+                        timeout=self.timeout,
+                    )
+                    try:
+                        payload = totp.json()
+                    except ValueError as exc:
+                        raise WebVpnAuthenticationFailed("WebVPN 二次认证返回格式异常") from exc
+                    if not payload.get("success"):
+                        raise WebVpnAuthenticationFailed(str(payload.get("message", "二次认证失败")))
+                    final_url = payload.get("url")
+                    if final_url:
+                        self.session.get(urljoin(VPN_BASE, str(final_url)), timeout=self.timeout)
+                    break
+
+                next_url = candidate
+                continue
+
+            # 检查报错 Marker
+            body = self.response_text(current)
+            marker = "var errorMessage = '"
+            if marker in body:
+                message = body.split(marker, 1)[1].split("'", 1)[0]
+                raise WebVpnAuthenticationFailed(message)
+            break
 
         if not self.session.cookies.get("wengine_vpn_ticketwebvpn_sylu_edu_cn"):
             raise WebVpnAuthenticationFailed("登录流程完成，但未获得 WebVPN Ticket")

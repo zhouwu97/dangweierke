@@ -2,8 +2,8 @@ import argparse
 import json
 import re
 import sys
-import getpass
 import os
+import time
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import List, Tuple, Optional
@@ -167,7 +167,7 @@ class JwxtClient:
                 kb_list = data.get("sjkList", [])
                 if kb_list:
                     _add_from_kblist(kb_list)
-        except EduError:
+        except (CookieLapseError, JwxtAuthenticationFailed):
             raise
         except Exception as e:
             print(f"  [WARN] 桌面端接口失败: {e}", file=sys.stderr)
@@ -183,11 +183,23 @@ class JwxtClient:
                     timeout=self.timeout
                 )
                 self._save_debug("02_timetable_mobile_raw", resp)
+                
+                if resp.status_code in (901, 302):
+                    raise CookieLapseError("教务会话已过期 (MOBILE)")
+                
+                content_type = resp.headers.get("Content-Type", "").lower()
+                if "html" in content_type:
+                    raise CookieLapseError("移动端请求返回了 HTML，教务会话可能失效")
+
                 if resp.status_code == 200 and resp.text.strip() not in ("null", ""):
                     data = resp.json()
+                    if "kbList" not in data:
+                        raise CourseNotOpenError("移动端未返回 kbList 字段")
                     kb_list = data.get("kbList", [])
                     if kb_list:
                         _add_from_kblist(kb_list)
+            except (CookieLapseError, JwxtAuthenticationFailed, CourseNotOpenError):
+                raise
             except Exception as e:
                 print(f"  [WARN] 移动端接口失败: {e}", file=sys.stderr)
 
@@ -205,7 +217,7 @@ class JwxtClient:
         page = 1
         show_count = 5000
 
-        while True:
+        while page <= 20:
             resp = self.session.post(
                 self.url("/cjcx/cjcx_cxXsgrcj.html"),
                 params={"doType": "query", "gnmkdm": "N305005", "su": student_id},
@@ -236,10 +248,20 @@ class JwxtClient:
                 raise GradesNotOpenError("成绩数据解析为 JSON 失败")
 
             items = data.get("items", [])
+            if not isinstance(items, list):
+                raise GradesNotOpenError("成绩接口返回的 items 不是列表格式，结构发生变化")
+            
+            if not items:
+                break
+                
             all_items.extend(items)
 
-            total_result = data.get("totalResult", 0)
-            if len(all_items) >= total_result or not items:
+            try:
+                total_result = int(data.get("totalResult") or 0)
+            except (TypeError, ValueError):
+                total_result = len(all_items)
+                
+            if len(all_items) >= total_result:
                 break
                 
             page += 1
@@ -264,16 +286,14 @@ def main():
     vpn_username = os.getenv("VPN_USERNAME")
     vpn_password = os.getenv("VPN_PASSWORD")
     jwxt_username = os.getenv("JWXT_USERNAME") or args.student_id
-    jwxt_password = os.getenv("JWXT_PASSWORD")
 
     if not vpn_username:
         vpn_username = input("请输入 VPN 账号: ")
     if not vpn_password:
+        import getpass
         vpn_password = getpass.getpass("请输入 VPN 密码: ")
     if not jwxt_username:
         jwxt_username = input("请输入教务学号: ")
-    if not jwxt_password:
-        jwxt_password = getpass.getpass("请输入教务密码: ")
 
     vpn_client = WebVpnClient(timeout=args.timeout, debug_dir=debug_dir)
     jwxt_client = JwxtClient(session=vpn_client.session, url_builder=vpn_client.url_for, timeout=args.timeout, debug_dir=debug_dir)
@@ -295,17 +315,18 @@ def main():
         print("[1/5] WebVPN 登录成功。")
 
         print("[2/5] 正在通过 WebVPN 建立教务会话...")
-        # 注意：正常可能还需要通过教务自身的 SSO，如果教务已经通过统一认证，这里直接访问会重定向。
-        # 这里只做测试抓取。对于教务如果是通过 unified identity login，这里可能还需要处理 SSO，
-        # 但如果是基于已跑通的凭证，访问 entry_url 会自动带上 CAS Ticket 并设置 JSESSIONID。
         result.has_jsessionid = jwxt_client.establish_session()
-        result.jwxt_session = result.has_jsessionid
-        print(f"[2/5] 教务会话建立完成，JSESSIONID 存在: {result.has_jsessionid}")
+        
+        if not result.has_jsessionid:
+            print("[2/5] 未获取到 JSESSIONID，将继续尝试通过后续接口验证会话")
+        else:
+            print("[2/5] 教务基础会话建立完成，已获得 JSESSIONID")
 
         print(f"[3/5] 正在抓取课表 ({args.year}-{args.semester})...")
         try:
             courses = jwxt_client.fetch_courses(args.year, args.semester, jwxt_username)
             result.course_count = len(courses)
+            result.jwxt_session = True  # 课表请求成功，确认为有效会话
             print(f"[3/5] 成功获取 {len(courses)} 门课。")
             if courses:
                 print("前 5 条课表记录：")
@@ -318,6 +339,7 @@ def main():
         try:
             grades = jwxt_client.fetch_grades(args.year, args.semester, jwxt_username)
             result.grade_count = len(grades)
+            result.jwxt_session = True  # 成绩请求成功，确认为有效会话
             print(f"[4/5] 成功获取 {len(grades)} 条成绩。")
             if grades:
                 print("前 5 条成绩记录：")
@@ -345,7 +367,6 @@ def main():
         return 10
     finally:
         vpn_password = ""
-        jwxt_password = ""
 
 
 if __name__ == "__main__":
