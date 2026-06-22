@@ -701,10 +701,10 @@ class ErkeClient:
         summary: dict[str, float] = {}
 
         for key, name in CATEGORY_NAMES.items():
-            node = soup.select_one(f"#Count{key}")
+            node = soup.select_one(f"#Count{key}1")
             if not node:
                 raise AuthenticationFailed(
-                    "成绩页未找到 CountA～CountE，"
+                    "成绩页未找到 CountA1～CountE1，"
                     "可能没有登录成功或页面已改版"
                 )
             summary[name] = (
@@ -714,10 +714,10 @@ class ErkeClient:
                 or 0.0
             )
 
-        total_node = soup.select_one("#SunCount")
+        total_node = soup.select_one("#SunCount1")
         if not total_node:
             raise LoginPageChanged(
-                "成绩页缺少 #SunCount"
+                "成绩页缺少 #SunCount1"
             )
 
         summary["总分"] = (
