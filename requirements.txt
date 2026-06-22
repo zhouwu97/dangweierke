@@ -1,0 +1,9 @@
+requests>=2.32,<3
+beautifulsoup4>=4.12,<5
+pycryptodome>=3.20,<4
+Pillow>=10.4,<13
+numpy>=1.26,<3
+torch>=2.4
+torchvision>=0.19
+onnx>=1.17
+onnxruntime>=1.20

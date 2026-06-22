@@ -1,0 +1,2 @@
+-r requirements.txt
+ddddocr>=1.5,<2
