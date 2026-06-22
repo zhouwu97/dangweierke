@@ -528,6 +528,9 @@ class ErkeClient:
         cls,
         password: str,
         salt: str,
+        *,
+        test_iv: bytes | None = None,
+        test_random_prefix: str | None = None,
     ) -> str:
         """
         对齐 CAS 页面 encrypt.js 的 encryptPassword：
@@ -543,10 +546,9 @@ class ErkeClient:
                 f"pwdEncryptSalt 长度异常：{len(key)}"
             )
 
-        iv = cls._vpn_random_string(16).encode("utf-8")
-        plaintext = (
-            cls._vpn_random_string(64) + password
-        ).encode("utf-8")
+        iv = test_iv if test_iv else cls._vpn_random_string(16).encode("utf-8")
+        prefix = test_random_prefix if test_random_prefix is not None else cls._vpn_random_string(64)
+        plaintext = (prefix + password).encode("utf-8")
 
         cipher = AES.new(
             key,
