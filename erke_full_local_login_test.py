@@ -158,10 +158,12 @@ class ErkeClient:
         self,
         *,
         mode: str,
-        vpn_ticket: str | None,
-        direct_base: str,
-        timeout: float,
-        debug_dir: Path | None,
+        vpn_ticket: str | None = None,
+        direct_base: str = "",
+        timeout: float = 15.0,
+        debug_dir: Path | None = None,
+        session: requests.Session | None = None,
+        url_builder = None,
     ) -> None:
         if mode not in {"webvpn", "direct"}:
             raise ValueError("mode 必须是 webvpn 或 direct")
@@ -171,31 +173,28 @@ class ErkeClient:
         self.timeout = timeout
         self.debug_dir = debug_dir
         self.login_path: str | None = None
+        self.url_builder = url_builder
 
-        self.session = requests.Session()
+        self.session = session if session else requests.Session()
 
-        # 学校 WebVPN 请求强制直连，不继承 HTTP_PROXY / HTTPS_PROXY /
-        # ALL_PROXY 等系统环境变量。避免 Clash 等本地代理未运行时，
-        # requests 仍尝试连接 127.0.0.1:7897。
-        self.session.trust_env = False
-        self.session.proxies.clear()
-
-        self.session.headers.update(
-            {
-                "User-Agent": USER_AGENT,
-                "Accept-Language": "zh-CN,zh;q=0.9",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-            }
-        )
-
-        if vpn_ticket:
-            self.session.cookies.set(
-                "wengine_vpn_ticketwebvpn_sylu_edu_cn",
-                vpn_ticket,
-                domain="webvpn.sylu.edu.cn",
-                path="/",
+        if not session:
+            self.session.trust_env = False
+            self.session.proxies.clear()
+            self.session.headers.update(
+                {
+                    "User-Agent": USER_AGENT,
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                }
             )
+            if vpn_ticket:
+                self.session.cookies.set(
+                    "wengine_vpn_ticketwebvpn_sylu_edu_cn",
+                    vpn_ticket,
+                    domain="webvpn.sylu.edu.cn",
+                    path="/",
+                )
 
         self._encrypted_host = self._encrypt_domain(TARGET_DOMAIN)
 
@@ -219,6 +218,9 @@ class ErkeClient:
 
         if self.mode == "direct":
             return self.direct_base + path
+
+        if self.url_builder:
+            return self.url_builder(TARGET_DOMAIN, path)
 
         return (
             f"{VPN_BASE}/http/"
@@ -1587,18 +1589,28 @@ def main() -> int:
                 )
                 return 2
 
+    from webvpn_client import WebVpnClient
+
+    vpn_client = WebVpnClient(
+        vpn_ticket=vpn_ticket,
+        timeout=args.timeout,
+        debug_dir=args.debug_dir,
+    )
+
     client = ErkeClient(
         mode=args.mode,
         vpn_ticket=vpn_ticket,
         direct_base=args.direct_base,
         timeout=args.timeout,
         debug_dir=args.debug_dir,
+        session=vpn_client.session,
+        url_builder=vpn_client.url_for,
     )
 
     try:
         if args.mode == "webvpn" and vpn_ticket is None:
             print("[0/4] 正在本地登录 WebVPN……")
-            client.login_webvpn(
+            vpn_client.login_cas(
                 vpn_username,
                 vpn_password,
             )

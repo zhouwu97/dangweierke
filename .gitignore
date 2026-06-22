@@ -30,3 +30,8 @@ logs/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Sensitive JSONs and Har files
+*.har
+*_raw.json
+test_summary.json

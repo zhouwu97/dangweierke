@@ -1,6 +1,6 @@
 # SYLUlive 二课登录协议分析与移植指南
 
-本文档总结了从本地直接发起二课（第二课堂）登录的完整协议流程，可作为后续向 Android (Kotlin) 或其他平台移植的技术规范。
+本文档总结了从本地直接发起二课（第二课堂）登录的完整协议流程，最终首选移植目标为 SYLUlive 的 Flutter/Dart 客户端，必要时部分能力才下沉 Android 原生 (Kotlin)。
 
 ## 术语定义与设计原则
 
@@ -13,7 +13,7 @@
 
 ## 关键技术细节纠正与注意事项
 
-在实现 Kotlin 或其他语言版本的移植时，必须严格遵守以下结论，避免踩坑：
+在实现 Flutter/Dart 或其他语言版本的移植时，必须严格遵守以下结论，避免踩坑：
 
 1. **CAS AES 加密逻辑**：
    - 算法流程：随机 64 字符前缀 + 密码 → AES-CBC + PKCS7 → 随机 16 字符 IV → 执行加密。
@@ -100,38 +100,37 @@
 
 ---
 
-## 推荐的 Kotlin 移植方案
+## 推荐的 Flutter/Dart 移植方案
 
 ### 模块结构建议
 
-建议按照以下职责划分包结构：
+建议按照以下职责划分包结构（Dart）：
 
 ```text
-education/
+lib/education/
 ├── network/
-│   ├── VpnCasClient.kt
-│   ├── WebVpnUrlCodec.kt
-│   ├── ErkeAuthClient.kt
-│   └── ErkeDataClient.kt
+│   ├── vpn_cas_client.dart
+│   ├── web_vpn_url_codec.dart
+│   ├── erke_auth_client.dart
+│   └── erke_data_client.dart
 ├── parser/
-│   ├── VpnLoginParser.kt
-│   ├── ErkeLoginParser.kt
-│   ├── ErkeSummaryParser.kt
-│   └── ErkeActivityParser.kt
+│   ├── vpn_login_parser.dart
+│   ├── erke_login_parser.dart
+│   ├── erke_summary_parser.dart
+│   └── erke_activity_parser.dart
 ├── crypto/
-│   ├── CasPasswordCipher.kt
-│   ├── WebVpnDomainCipher.kt
-│   └── ErkeRsaCipher.kt
+│   ├── cas_password_cipher.dart
+│   ├── web_vpn_domain_cipher.dart
+│   └── erke_rsa_cipher.dart
 ├── storage/
-│   ├── EducationCredentialStore.kt
-│   ├── EducationCookieStore.kt
-│   └── EducationCacheStore.kt
+│   ├── education_credential_store.dart
+│   ├── education_cookie_store.dart
+│   └── education_cache_store.dart
 ├── model/
-│   ├── ErkeSummary.kt
-│   ├── ErkeActivity.kt
-│   └── EducationResult.kt
-├── EducationRepository.kt
-└── LocalEducationPlugin.kt
+│   ├── erke_summary.dart
+│   ├── erke_activity.dart
+│   └── education_result.dart
+└── education_repository.dart
 ```
 
 ### 推荐移植顺序
@@ -147,11 +146,11 @@ education/
 7. 二课网络登录逻辑
 8. 总分和活动解析
 9. Cookie 安全保存
-10. Flutter MethodChannel 或 Pigeon 接口对接
+10. 集成进应用
 
 ### 跨语言测试基准
 
-在进行 Kotlin 开发前，建议基于已跑通的 Python 环境，生成一组不含真实敏感凭证的测试样本，用于保障两端输出的绝对一致：
+在进行 Dart 开发前，建议基于已跑通的 Python 环境，生成一组不含真实敏感凭证的测试样本，用于保障两端输出的绝对一致：
 
 ```text
 fixtures/
@@ -162,7 +161,7 @@ fixtures/
 └── erke_activities_page_2.html
 ```
 
-Python 和 Kotlin 的单元测试应当得到完全相同的：
+Python 和 Dart 的单元测试应当得到完全相同的：
 - WebVPN 加密域名
 - CAS 加密输出测试向量（使用固定 IV 与前缀）
 - 验证码和 queryBtn 等表单字段
