@@ -1,13 +1,36 @@
-# SYLUlive 二课验证码本地 ONNX 工具包
+# SYLUlive 校外本地校园数据协议验证工具
 
-这套工具完成四件事：
+此项目现已转型为 **SYLUlive** 校园数据的本地协议分析与验证库，用于通过 WebVPN 采集二课、教务等关键数据，为 Flutter/Dart 客户端的最终集成做协议验证与技术储备。
 
-1. 复用 SYLUlive 当前二课 WebVPN URL 构造方式，下载二课登录验证码；
-2. 可选使用 `ddddocr` 生成**伪标签**；
-3. 使用本地审核界面逐张确认或纠正标签；
-4. 用 PyTorch 训练轻量 CNN，并导出 Android 可运行的 `captcha.onnx`。
+> **背景故事与项目转型**  
+> 此项目原名为 `sylulive_captcha_onnx_toolkit`，最初用于解决本地二课系统的验证码识别（通过本地 ONNX 模型）。由于最新版的 WebVPN 和教务系统通过直连/代理模式已被验证可以稳定抓取，我们将**验证码相关的旧代码**归档至 `legacy/captcha_onnx/`，而主线工作已转向统一使用 Python 验证协议（无需第三方服务器），以便之后直接向 Dart (Flutter) 迁移。
 
-> 仅用于你本人有权访问的学校系统和账号。采集器默认限速，并且只下载验证码，不自动反复提交登录。
+## 当前包含的能力验证
+
+*   **WebVPN 统一会话共享** (`webvpn_client.py`)
+*   **教务系统本地全流程** (`jwxt_full_local_test.py` 与 `JWXT_PROTOCOL.md`)
+*   **二课系统本地全流程** (`erke_full_local_login_test.py` 与 `LOGIN_PROTOCOL.md`)
+
+## 快速使用
+
+### 环境要求
+- Python 3.10+
+- 推荐使用 `venv`
+- 安装依赖：`pip install -r requirements.txt` (若需要旧版功能，请进入 `legacy` 安装额外依赖)
+
+### 教务与二课测试
+
+教务与二课系统的本地抓取验证：
+
+```powershell
+# 教务测试
+$env:VPN_USERNAME="账号"; $env:VPN_PASSWORD="密码"; $env:JWXT_PASSWORD="密码"
+python jwxt_full_local_test.py --student-id "学号" --year "2025" --semester "12"
+
+# 二课测试
+$env:VPN_USERNAME="账号"; $env:VPN_PASSWORD="密码"; $env:ERKE_USERNAME="学号"; $env:ERKE_PASSWORD="密码"
+python erke_full_local_login_test.py --mode webvpn
+```
 
 ## 目录
 
