@@ -37,6 +37,29 @@ class CookieLapseError(JwxtError):
     pass
 
 
+class WebVpnAccessDeniedError(JwxtError):
+    """WebVPN 已认证，但当前账号无权访问目标内网资源。"""
+
+
+ACCESS_DENIED_MARKERS = (
+    "没有权限访问该资源",
+    "无权访问该资源",
+    "您没有权限",
+)
+
+
+def _raise_for_html_interception(html: str) -> None:
+    if any(marker in html for marker in ACCESS_DENIED_MARKERS):
+        raise WebVpnAccessDeniedError(
+            "WebVPN 登录成功，但当前账号无权访问教务系统"
+        )
+
+    if "统一身份认证" in html or "登录" in html:
+        raise CookieLapseError(
+            "会话已失效，接口返回登录页面"
+        )
+
+
 @dataclass
 class CourseRawData:
     name: str
@@ -104,8 +127,8 @@ class JwxtClient:
         self._save_debug("01_jwxt_entry", resp)
 
         content_type = resp.headers.get("Content-Type", "").lower()
-        if "html" in content_type and "unified identity authentication" in resp.text.lower():
-            raise JwxtAuthenticationFailed("被重定向到统一身份认证页面，WebVPN Ticket 可能无效")
+        if "html" in content_type:
+            _raise_for_html_interception(resp.text)
 
         has_jsessionid = False
         for cookie in self.session.cookies:
@@ -160,6 +183,7 @@ class JwxtClient:
                 
             content_type = resp.headers.get("Content-Type", "").lower()
             if "html" in content_type:
+                _raise_for_html_interception(resp.text)
                 raise CookieLapseError("请求返回了 HTML，教务会话可能失效")
 
             if resp.status_code == 200 and resp.text.strip() not in ("null", ""):
@@ -167,7 +191,7 @@ class JwxtClient:
                 kb_list = data.get("sjkList", [])
                 if kb_list:
                     _add_from_kblist(kb_list)
-        except (CookieLapseError, JwxtAuthenticationFailed):
+        except (CookieLapseError, JwxtAuthenticationFailed, WebVpnAccessDeniedError):
             raise
         except Exception as e:
             print(f"  [WARN] 桌面端接口失败: {e}", file=sys.stderr)
@@ -189,6 +213,7 @@ class JwxtClient:
                 
                 content_type = resp.headers.get("Content-Type", "").lower()
                 if "html" in content_type:
+                    _raise_for_html_interception(resp.text)
                     raise CookieLapseError("移动端请求返回了 HTML，教务会话可能失效")
 
                 if resp.status_code == 200 and resp.text.strip() not in ("null", ""):
@@ -198,7 +223,7 @@ class JwxtClient:
                     kb_list = data.get("kbList", [])
                     if kb_list:
                         _add_from_kblist(kb_list)
-            except (CookieLapseError, JwxtAuthenticationFailed, CourseNotOpenError):
+            except (CookieLapseError, JwxtAuthenticationFailed, CourseNotOpenError, WebVpnAccessDeniedError):
                 raise
             except Exception as e:
                 print(f"  [WARN] 移动端接口失败: {e}", file=sys.stderr)
@@ -240,6 +265,7 @@ class JwxtClient:
 
             content_type = resp.headers.get("Content-Type", "").lower()
             if "html" in content_type:
+                _raise_for_html_interception(resp.text)
                 raise CookieLapseError("成绩接口返回 HTML，会话可能已失效")
 
             try:
@@ -362,6 +388,9 @@ def main():
     except CookieLapseError as e:
         print(f"教务会话失效: {e}", file=sys.stderr)
         return 3
+    except WebVpnAccessDeniedError as e:
+        print(f"教务入口访问被拒绝: {e}", file=sys.stderr)
+        return 4
     except Exception as e:
         print(f"未知错误: {e}", file=sys.stderr)
         return 10
